@@ -73,8 +73,8 @@ namespace ldso {
             }
 
             inline bool isInlierNew() {
-                return (int) residuals.size() >= setting_minGoodActiveResForMarg
-                       && numGoodResiduals >= setting_minGoodResForMarg;
+                return (int) residuals.size() >= setting_minGoodActiveResForMarg  //默认设置为3
+                       && numGoodResiduals >= setting_minGoodResForMarg;  //默认设置为4
             }
 
 

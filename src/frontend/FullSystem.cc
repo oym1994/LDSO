@@ -72,20 +72,26 @@ namespace ldso {
         LOG(INFO) << "*** taking frame " << id << " ***" << endl;
 
         // create frame and frame hessian
+        //获得时间戳和ID
         shared_ptr<Frame> frame(new Frame(image->timestamp));
+        //将自己赋予自己的成员对象frameHessian
         frame->CreateFH(frame);
+        //将frame添加进历史frame数据库,注意添加的是指针,所以后面对frame的操作都会被记录在数据库里
         allFrameHistory.push_back(frame);
 
         // ==== make images ==== //
+        //提取指向frameHessian的指针
         shared_ptr<FrameHessian> fh = frame->frameHessian;
+        // 获取曝光时间
         fh->ab_exposure = image->exposure_time;
-        // create image gray and gradient pyramid
+        // create image gray and gradient pyramid,计算图像金字塔和梯度,详细过程见DSO论文
         fh->makeImages(image->image, Hcalib->mpCH);
 
         if (!initialized) {
             LOG(INFO) << "Initializing ... " << endl;
             // use initializer
-            if (coarseInitializer->frameID < 0) { // first frame not set, set it
+            if (coarseInitializer->frameID < 0) { // frameID初始化为-1
+                // first frame not set, set it.之后frameID为0
                 coarseInitializer->setFirst(Hcalib->mpCH, fh);
             } else if (coarseInitializer->trackFrame(fh)) {
                 // init succeeded
@@ -113,8 +119,9 @@ namespace ldso {
 
             // track the new frame and get the state
             LOG(INFO) << "tracking new frame" << endl;
+            //粗略tracking,返回值是vector(残差,纯平移状态下的平均光流,0,平移旋转下的平均光流)
             Vec4 tres = trackNewCoarse(fh);
-
+            //有不合理数据,则跟踪失败
             if (!std::isfinite((double) tres[0]) || !std::isfinite((double) tres[1]) ||
                 !std::isfinite((double) tres[2]) || !std::isfinite((double) tres[3])) {
                 // invalid result
@@ -123,8 +130,9 @@ namespace ldso {
                 return;
             }
 
+            //关键帧选取原则,详见DSO论文
             bool needToMakeKF = false;
-            // 如果定时关键帧插入的标志位设置为true, 那么如果关键帧的输入只有一帧或者相邻帧的时间间隔太长,则需要插入关键帧
+            // 如果定时关键帧插入的标志位设置为true, 那么如果关键帧的输入只有一帧或者相邻帧的时间间隔太长,则需要插入关键帧,论文以及程序设置为0
             if (setting_keyframesPerSecond > 0) {
                 needToMakeKF = allFrameHistory.size() == 1 ||
                                (frame->timeStamp - frames.back()->timeStamp) >
@@ -134,18 +142,18 @@ namespace ldso {
                 Vec2 refToFh = AffLight::fromToVecExposure(coarseTracker->lastRef->ab_exposure, fh->ab_exposure,
                                                            coarseTracker->lastRef_aff_g2l, fh->aff_g2l());
                 // keyframe creation,　见DSO论文Chapter 3.2 Frame Management 的 Step2 Keyframe Creation 的判断条件
-                float b = setting_kfGlobalWeight * setting_maxShiftWeightT * sqrtf((double) tres[1]) /       //纯位移光流
+                float b = setting_kfGlobalWeight * setting_maxShiftWeightT * sqrtf((double) tres[1]) /  //纯位移光流,对应论文里Keyframe Ceation 准则2
                           (wG[0] + hG[0]) +
-                          setting_kfGlobalWeight * setting_maxShiftWeightR * sqrtf((double) tres[2]) /       // 没有用
+                          setting_kfGlobalWeight * setting_maxShiftWeightR * sqrtf((double) tres[2]) /   //没有用,论文也提到without rotation
                           (wG[0] + hG[0]) +
                           setting_kfGlobalWeight * setting_maxShiftWeightRT * sqrtf((double) tres[3]) /
-                          // 旋转和平移复合的光溜
+                          // 旋转和平移复合的光流,对应论文里Keyframe Ceation 准则1
                           (wG[0] + hG[0]) +
-                          setting_kfGlobalWeight * setting_maxAffineWeight * fabs(logf((float) refToFh[0])); // 光度变换
+                          setting_kfGlobalWeight * setting_maxAffineWeight * fabs(logf((float) refToFh[0])); // 光度变换,对应论文里Keyframe Ceation 准则3
 
                 bool b1 = b > 1;
                 // if the current photometric error larger than the initial errors
-                // 如果追踪当前帧计算得到的光度误差大于初始的误差的2被,那么需要插入关键帧
+                // 如果追踪当前帧计算得到的光度误差大于初始的误差的2倍,那么需要插入关键帧
                 bool b2 = 2 * coarseTracker->firstCoarseRMSE < tres[0];
 
                 needToMakeKF = allFrameHistory.size() == 1 || b1 || b2;
@@ -332,7 +340,7 @@ namespace ldso {
         // I'll keep track of the so-far best achieved residual for each level in achievedRes.
         // If on a coarse level, tracking is WORSE than achievedRes, we will not continue to save time.
 
-        Vec5 achievedRes = Vec5::Constant(NAN);
+        Vec5 achievedRes = Vec5::Constant(NAN); //代表每一层的光度误差,0层代表最终的光度误差?
         bool haveOneGood = false;
         int tryIterations = 0;
         for (unsigned int i = 0; i < lastF_2_fh_tries.size(); i++) {
@@ -440,7 +448,7 @@ namespace ldso {
 
         LOG(INFO) << "frame " << fh->frame->id << " is marked as key frame, active keyframes: " << frames.size()
                   << endl;
-        // Step2: 使用newest Frame 更新滑窗中其他帧的immature point
+        // Step2: 使用newest Frame 更新滑窗中其他帧的immature point,具体描述见DSO论文3.2里的step2
         // trace new keyframe to update the inverse depth of the
         // immature point in slide widow by epipolar search
         traceNewCoarse(fh);
@@ -536,8 +544,8 @@ namespace ldso {
         if (isLost)
             return;
 
-        // =========================== REMOVE OUTLIER =========================
-        removeOutliers();
+        // ============ REMOVE OUTLIER,详见DSO论文第三节最后一段:OUtlier and Occlusion Detection? =========================
+        removeOutliers();//剔除residuals为empty的点,标记为OUTLIER
 
         // swap the coarse Tracker for new kf
         {
@@ -550,19 +558,20 @@ namespace ldso {
         }
 
         // =========================== (Activate-)Marginalize Points =========================
-        // traditional bundle adjustment when marging all points
-        flagPointsForRemoval();
-        ef->dropPointsF();
-
+        // traditional bundle adjustment when marging all points边缘化特征点,与removeOutliers()用到了同一个函数ef->dropPointsF(),但意图不一样
+        flagPointsForRemoval();//no residuals or idepth invalid 标注为OUTLIER,idepth_hessian小于某个阈值的以及不活跃的点设为OUT,否则设为MARGINALIZED
+        ef->dropPointsF();  //去除OUT和OUTLIER点
+        //得到零空间
         getNullspaces(
                 ef->lastNullspaces_pose,
                 ef->lastNullspaces_scale,
                 ef->lastNullspaces_affA,
                 ef->lastNullspaces_affB);
-
+        //在能量函数里边缘化掉MARGINALIZED的点
         ef->marginalizePointsF();
 
         // =========================== add new Immature points & new residuals =========================
+        // step1:创建新的特征点
         makeNewTraces(fh, 0);
 
         // record the relative poses, note we are building a covisibility graph in fact
@@ -570,7 +579,7 @@ namespace ldso {
         unsigned long minKFId = (*minandmax.first)->kfId;
         unsigned long maxKFId = (*minandmax.second)->kfId;
 
-        if (setting_fastLoopClosing == false) {
+        if (setting_fastLoopClosing == false) {  //默认状态下setting_fastLoopClosing=true
             // record all active keyframes
             for (auto &fr : frames) {
                 auto allKFs = globalMap->GetAllKFs();
@@ -587,12 +596,14 @@ namespace ldso {
             // only record the reference and first frame and also update the keyframe poses in window
             {
                 unique_lock<mutex> lock(frame->mutexPoseRel);
+                //当前帧frame在refFrame里的相对pose,也就是refFrame到frame的变换
                 frame->poseRel[refFrame] = Sim3((frame->getPose() * refFrame->getPose().inverse()).matrix());
                 auto firstFrame = frames.front();
+                //当前帧frame在滑动窗口中第一帧里的相对pose,也就是第一帧到frame的变换
                 frame->poseRel[firstFrame] = Sim3((frame->getPose() * firstFrame->getPose().inverse()).matrix());
             }
 
-            // update the poses in window
+            // update the poses in window,得到该帧在其参考帧的pose?
             for (auto &fr : frames) {
                 if (fr == frame)
                     continue;
@@ -613,19 +624,23 @@ namespace ldso {
             for (unsigned int i = 0; i < frames.size(); i++)
                 if (frames[i]->frameHessian->flaggedForMarginalization) {
                     LOG(INFO) << "marg frame " << frames[i]->id << endl;
+                    //检查该帧不是粗略跟踪的最近参考帧?
                     CHECK(frames[i] != coarseTracker->lastRef->frame);
                     marginalizeFrame(frames[i]);
                     i = 0;
                 }
         }
 
-        // add current kf into map and detect loops
+        // add current kf into map and detect loops,在这里只是将关键帧插入关键帧队列里,并没有进行闭环检测
         globalMap->AddKeyFrame(fh->frame);
         if (setting_enableLoopClosing) {
             loopClosing->InsertKeyFrame(frame);
         }
         LOG(INFO) << "make keyframe done" << endl;
     }
+
+
+
 
     void FullSystem::makeNonKeyFrame(shared_ptr<FrameHessian> &fh) {
         {
@@ -1293,6 +1308,7 @@ namespace ldso {
                 fhsToMargPoints;
 
         for (int i = 0; i < (int) frames.size(); i++)
+            //如果该帧要被边缘化,则将对应的特征点放进fhsToMargPoints里来
             if (frames[i]->frameHessian->flaggedForMarginalization)
                 fhsToMargPoints.push_back(frames[i]->frameHessian);
 
@@ -1306,25 +1322,25 @@ namespace ldso {
                     feat->point->status == Point::PointStatus::ACTIVE) {
 
                     shared_ptr<PointHessian> ph = feat->point->mpPH;
-
+                    //逆深度<0或者没有残差的点设置为OUTLIER;
                     if (ph->idepth_scaled < 0 || ph->residuals.size() == 0) {
-                        // no residuals or idepth invalid
+                        // no residuals or idepth invalid没有残差或者逆深度小于0,相应feature和point的状态都设为OUTLIER,每一个feature都对应一个point
                         ph->point->status = Point::PointStatus::OUTLIER;
                         feat->status = Feature::FeatureStatus::OUTLIER;
                         flag_nores++;
                     } else if (ph->isOOB(fhsToMargPoints) || host->flaggedForMarginalization) {
                         // the point goes out the boundary, or the host frame is marged
                         flag_oob++;
-                        if (ph->isInlierNew()) {
+                        if (ph->isInlierNew()) {  //good residuals的数量多于阈值,则属于active的
                             flag_in++;
                             int ngoodRes = 0;
                             for (auto r : ph->residuals) {
                                 r->resetOOB();
-                                r->linearize(this->Hcalib->mpCH);
+                                r->linearize(this->Hcalib->mpCH); //线性化重投影,得到新的energy function
                                 r->isLinearized = false;
                                 r->applyRes(true);
                                 if (r->isActive()) {
-                                    r->fixLinearizationF(this->ef);
+                                    r->fixLinearizationF(this->ef);  //固定雅克比
                                     ngoodRes++;
                                 }
                             }

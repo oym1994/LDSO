@@ -185,8 +185,8 @@ namespace ldso {
             } // end of L-M iteration
 
             // set last residual for that level, as well as flow indicators.
-            lastResiduals[lvl] = sqrtf((float) (resOld[0] / resOld[1]));
-            lastFlowIndicators = resOld.segment<3>(2);
+            lastResiduals[lvl] = sqrtf((float) (resOld[0] / resOld[1]));  //平均光度残差
+            lastFlowIndicators = resOld.segment<3>(2);  //从resOld 2位置开始的3元素块,resOld[2],resOld[3],resOld[4],分别为只有平移时的平均光流,0,平移旋转情况下的平均光流
             if (lastResiduals[lvl] > 1.5 * minResForAbort[lvl])
                 return false;
             // the photometric error is bigger, then need optimization
@@ -519,7 +519,7 @@ namespace ldso {
                 sumSquaredShiftNum += 2;
             }
 
-            if (!(Ku > 2 && Kv > 2 && Ku < wl - 3 && Kv < hl - 3 && new_idepth > 0)) continue;
+            if (!(Ku > 2 && Kv > 2 && Ku < wl - 3 && Kv < hl - 3 && new_idepth > 0)) continue;  //投影落到边界上就不需要这些点了
 
 
             float refColor = lpc_color[i];

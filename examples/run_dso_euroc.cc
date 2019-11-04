@@ -302,7 +302,7 @@ int main(int argc, char **argv) {
 
     // to make MacOS happy: run this in dedicated thread -- and use this one to run the GUI.
     std::thread runthread([&]() {
-        std::vector<int> idsToPlay;
+        std::vector<int> idsToPlay;  //数据集里的图片数量
         std::vector<double> timesToPlayAt;
         for (int i = lstart; i >= 0 && i < reader->getNumImages() && linc * i < linc * lend; i += linc) {
             idsToPlay.push_back(i);
@@ -346,14 +346,14 @@ int main(int argc, char **argv) {
             int i = idsToPlay[ii];
 
             ImageAndExposure *img;
-            if (preload)
+            if (preload)   //preload ----是否提前加载数据集,一般不需要
                 img = preloadedImages[ii];
             else
-                img = reader->getImage(i);
+                img = reader->getImage(i);   //读取图像,
 
 
             bool skipFrame = false;
-            if (playbackSpeed != 0) {
+            if (playbackSpeed != 0) {   //  preset=0的情况下 playbackspeed = 0
                 struct timeval tv_now;
                 gettimeofday(&tv_now, NULL);
                 double sSinceStart = sInitializerOffset + ((tv_now.tv_sec - tv_start.tv_sec) +
